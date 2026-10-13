@@ -49,6 +49,8 @@ from sklearn.preprocessing import StandardScaler
 
 from bins import PriceBinner
 from common import (
+    load_features,
+    write_submission,
     EXPERIMENT_DIR,
     align_features,
     band_errors,
@@ -210,6 +212,9 @@ def main() -> None:
     parser.add_argument("--seeds", type=int, nargs="+", default=[0],
                         help="repeat each run with these seeds to gauge run-to-run stability")
     parser.add_argument("--out", default="e3_e4_sweep")
+    parser.add_argument("--write-submission", action="store_true",
+                        help="refit the best configuration on all training data and WRITE a "
+                             "Kaggle-format CSV locally (does not upload)")
     args = parser.parse_args()
 
     CFG.update(n_bins=args.bins, smoothing=args.smoothing,
@@ -265,6 +270,30 @@ def main() -> None:
     print(band_errors(y, store[key]).to_string(index=False, float_format=lambda v: f"{v:,.1f}"))
     print("\nreliability (binned by PREDICTION):")
     print(reliability(y, store[key]).to_string(index=False, float_format=lambda v: f"{v:,.1f}"))
+
+    if args.write_submission:
+        tag, head = best["tag"], best["head"]
+        parts = tag.split("+")
+        X = np.concatenate([align_features(p, folds) for p in parts], axis=1)
+        Xte = np.concatenate([load_features(p, "test")[0] for p in parts], axis=1)
+        test_ids = load_features(parts[0], "test")[1]
+
+        # Refit on all 8,000 training rows. The isotonic decoder is still
+        # fitted on out-of-fold predictions only -- in-sample predictions
+        # would make it close to the identity and undo the calibration.
+        scaler = StandardScaler().fit(X)
+        Xs, Xte_s = scaler.transform(X), scaler.transform(Xte)
+
+        preds = []
+        for seed in args.seeds:
+            CFG["seed"] = seed
+            oof = np.zeros(len(y))
+            for itr, iva in KFold(5, shuffle=True, random_state=seed).split(Xs):
+                oof[iva] = HEADS[head](Xs[itr], y[itr], Xs[iva])
+            calibrator = IsotonicRegression(out_of_bounds="clip").fit(oof, y)
+            preds.append(calibrator.predict(HEADS[head](Xs, y, Xte_s)))
+        print()
+        write_submission(test_ids, np.mean(preds, axis=0), f"{args.out}_{head}")
 
 
 if __name__ == "__main__":

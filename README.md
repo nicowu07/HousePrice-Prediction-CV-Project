@@ -36,7 +36,7 @@ and do not need to burn submissions probing.
 
 ---
 
-## Things that change your plan, Hongze
+## Things that change our plan
 
 Please read these two before spending more time on your branch.
 
