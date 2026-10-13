@@ -1,0 +1,54 @@
+# NOTE: git has no inline comments. A '#' only starts a comment at the start
+# of a line, so every comment here sits on its own line.
+
+# --- data: never commit the provided images ---
+# The brief forbids shipping them in the code submission, and they are large.
+# The frozen fold assignment is the exception: it is part of reproducibility.
+data/*
+!data/splits/
+data/splits/*
+!data/splits/*.csv
+
+# --- frozen-backbone feature caches (~45 MB each) ---
+features/
+
+# --- model weights and archives ---
+*.pt
+*.pth
+*.ckpt
+*.zip
+
+# --- experiment outputs: keep the records, drop the arrays ---
+outputs/*
+!outputs/experiments/
+outputs/experiments/*
+!outputs/experiments/*.md
+!outputs/experiments/*.csv
+!outputs/experiments/*.json
+!outputs/submissions/
+outputs/submissions/*
+!outputs/submissions/*.csv
+
+# throwaway sweep runs
+outputs/experiments/tmp_*
+
+# raw arrays are regenerable from the scripts
+*.npy
+*.npz
+
+# --- python ---
+.venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+
+# --- editor / os ---
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# --- course material: not redistributed from a public repo ---
+COMP90086_2026_Project.pdf
+CV_Plan.pdf

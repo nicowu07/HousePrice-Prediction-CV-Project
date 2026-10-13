@@ -1,0 +1,31 @@
+# --- core (install torch separately with the CUDA index-url, see README) ---
+# exact versions used for the reported results are in requirements.lock.txt
+torch
+torchvision
+timm>=1.0.9
+
+# --- data / numerics ---
+numpy
+pandas
+scipy
+scikit-learn
+lightgbm
+xgboost
+
+# --- images ---
+pillow
+pillow-simd; platform_system != "Windows"
+opencv-python
+imagehash
+
+# --- training utils ---
+tqdm
+pyyaml
+matplotlib
+seaborn
+
+# --- explainability (for Grad-CAM figures in the report) ---
+grad-cam
+
+# --- kaggle ---
+kaggle

@@ -1,0 +1,5 @@
+{
+  "tag": "vit_base_patch14_reg4_dinov2_224_squash",
+  "decode": "log_isotonic",
+  "mse": 88663.06979487803
+}
