@@ -216,6 +216,8 @@ def train_fold(args, folds: pd.DataFrame, fold: int, test_ds: Dataset):
 
     torch.manual_seed(args.seed + fold)
     model = build_model(args.model, args.img_size).to(DEVICE)
+    if args.grad_checkpoint and hasattr(model, "set_grad_checkpointing"):
+        model.set_grad_checkpointing(True)
     groups, scales = param_groups(model, args.weight_decay, args.layer_decay)
     opt = torch.optim.AdamW(groups, lr=args.lr)
     steps = args.epochs * len(tr_ld)
@@ -225,11 +227,20 @@ def train_fold(args, folds: pd.DataFrame, fold: int, test_ds: Dataset):
     loss_fn = nn.MSELoss()
 
     t0 = time.time()
+    history: list[tuple[int, float, float]] = []
     for epoch in range(args.epochs):
         model.train()
         running = 0.0
         for x, t in tqdm(tr_ld, desc=f"fold {fold} epoch {epoch + 1}/{args.epochs}", leave=False):
             x, t = x.to(DEVICE, non_blocking=True), t.to(DEVICE, non_blocking=True)
+            if args.mixup > 0:
+                # Mixing images and their log-prices linearly is coherent for
+                # regression in a way it is not for classification: the target
+                # of a blended image is the blended target.
+                lam = float(np.random.beta(args.mixup, args.mixup))
+                perm = torch.randperm(x.size(0), device=DEVICE)
+                x = lam * x + (1 - lam) * x[perm]
+                t = lam * t + (1 - lam) * t[perm]
             with torch.autocast(DEVICE, dtype=torch.bfloat16, enabled=DEVICE == "cuda"):
                 loss = loss_fn(model(x).squeeze(1), t)
             opt.zero_grad(set_to_none=True)
@@ -244,13 +255,17 @@ def train_fold(args, folds: pd.DataFrame, fold: int, test_ds: Dataset):
             ema.copy_to(model)
             val_log = predict(model, va_ld, tta_flip=False)
             val_mse = float(((np.exp(val_log) - va_rows["price"].to_numpy()) ** 2).mean())
+            history.append((epoch + 1, running / len(tr_ld), val_mse))
+            # flush: without it the whole run is a black box until it exits,
+            # and an under-trained or diverging run looks identical to a
+            # healthy one until the end.
             print(f"  fold {fold} epoch {epoch + 1:>3}  train_loss {running / len(tr_ld):.4f}  "
-                  f"val_MSE(uncalibrated) {val_mse:,.0f}  [{time.time() - t0:.0f}s]")
+                  f"val_MSE(uncalibrated) {val_mse:,.0f}  [{time.time() - t0:.0f}s]", flush=True)
 
     ema.copy_to(model)
     val_log = predict(model, va_ld, tta_flip=args.tta_flip)
     test_log = predict(model, te_ld, tta_flip=args.tta_flip)
-    return val_log, test_log, va_mask
+    return val_log, test_log, va_mask, history
 
 
 def main() -> None:
@@ -264,9 +279,13 @@ def main() -> None:
     parser.add_argument("--layer-decay", type=float, default=0.75)
     parser.add_argument("--ema-decay", type=float, default=0.999)
     parser.add_argument("--tta-flip", action="store_true")
+    parser.add_argument("--mixup", type=float, default=0.0,
+                        help="Beta(a,a) mixup strength; 0 disables")
+    parser.add_argument("--grad-checkpoint", action="store_true",
+                        help="trade compute for activation memory on large backbones")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--folds", type=int, nargs="+", default=None, help="subset of folds (default: all)")
-    parser.add_argument("--log-every", type=int, default=5)
+    parser.add_argument("--log-every", type=int, default=1)
     parser.add_argument("--write-submission", action="store_true",
                         help="write a Kaggle-format CSV locally (does not upload)")
     parser.add_argument("--tag", default=None)
@@ -284,8 +303,10 @@ def main() -> None:
 
     oof_log = np.full(len(folds), np.nan)
     test_logs = []
+    histories: dict[int, list] = {}
     for fold in run_folds:
-        val_log, test_log, va_mask = train_fold(args, folds, fold, test_ds)
+        val_log, test_log, va_mask, hist = train_fold(args, folds, fold, test_ds)
+        histories[fold] = hist
         oof_log[va_mask] = val_log
         test_logs.append(test_log)
 
@@ -304,7 +325,9 @@ def main() -> None:
     np.savez(EXPERIMENT_DIR / f"{tag}_oof.npz", oof_log=oof_log, mask=done,
              test_log=np.mean(test_logs, axis=0))
     (EXPERIMENT_DIR / f"{tag}_config.json").write_text(
-        json.dumps({**vars(args), "mse": m["mse"], "r2": m["r2"]}, indent=2, default=str))
+        json.dumps({**vars(args), "mse": m["mse"], "r2": m["r2"],
+                    "history": {str(k): v for k, v in histories.items()}},
+                   indent=2, default=str))
 
     print("\nper-band error (binned by TRUE price):")
     print(band_errors(y[done], oof_price).to_string(index=False, float_format=lambda v: f"{v:,.1f}"))

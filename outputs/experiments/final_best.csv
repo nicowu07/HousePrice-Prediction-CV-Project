@@ -1,0 +1,2 @@
+mse,rmse,mae,r2,bias,slope,pct_vs_baseline,tag,head,dim,seconds,mse_seed_std
+68521.65722959662,261.7664173067214,185.5238556720324,0.5626803119257602,1.2198882322527844,1.0023225462572476,56.26803119257602,vit_huge_plus_patch16_dinov3_336_squash+vit_huge_plus_patch16_dinov3_256_squash+vit_large_patch16_dinov3_336_squash+vit_large_patch14_reg4_dinov2_336_squash+vit_large_patch16_dinov3_224_squash_tile2+photometa,mlp_mse,11283,234.63631749153137,254.85360500682634

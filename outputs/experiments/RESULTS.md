@@ -325,3 +325,269 @@ IEEE column widths.
 | `fig4_representations.pdf` | Out-of-fold MSE by frozen backbone and input resolution |
 
 Units: price is in $1000 USD throughout, so MSE is in ($1000 USD)².
+
+---
+
+# Part II — second round (2026-10-20)
+
+| Reference | MSE | Note |
+| --- | --- | --- |
+| Predict the training mean | 156,686 | constant-prediction baseline |
+| Our 2026-09-23 submission | 100,376 | public LB |
+| Our 2026-10-13 submission | **70,097** | public LB, from OOF 74,467 |
+| Public leaderboard top | 41,862 | 2026-10-20; 20 teams between 41.9k and 49.2k |
+
+**Out-of-fold to leaderboard calibration.** The 2026-10-13 submission scored
+70,097 against an OOF estimate of 74,467, a ratio of 0.941. The September
+submission's ratio was 0.993. The difference is refitting: each OOF model
+trains on 6,400 rows while the submitted model is refitted on all 8,000. Treat
+**LB ~= 0.94 x OOF** as the working conversion.
+
+---
+
+## E7 — DINOv3, and a clean pretraining/architecture decomposition
+
+| Features | MSE | R2 |
+| --- | ---: | ---: |
+| DINOv3 ViT-H+/16 @336 | **70,818** | 0.548 |
+| DINOv3 ViT-H+/16 @256 | 71,344 | 0.545 |
+| DINOv3 ViT-H+/16 @224 | 72,396 | 0.538 |
+| DINOv3 ViT-L/16 @336 | 74,134 | 0.527 |
+| DINOv3 ViT-L/16 @224 | 76,802 | 0.510 |
+| DINOv2 ViT-L/14 @336 | 76,807 | 0.510 |
+| DINOv3 ConvNeXt-L @288 | 86,454 | 0.448 |
+| DINOv3 ConvNeXt-B @288 | 87,744 | 0.440 |
+| ConvNeXt-B @288 (IN-22k, supervised) | 98,752 | 0.370 |
+| Photographic metadata only (19 features) | 140,538 | 0.103 |
+
+A single DINOv3 ViT-H+ beats the whole four-backbone DINOv2 concatenation with
+seed averaging from Part I (74,467). DINOv3 ViT-L @224 (76,802) also matches
+DINOv2 ViT-L @336 (76,807): better pretraining data buys the same as a 1.5x
+resolution increase, far more cheaply.
+
+**Three factors, separated.** Holding everything else fixed:
+
+| Comparison | Effect |
+| --- | ---: |
+| Pretraining objective (supervised IN-22k -> self-supervised DINOv3, ConvNeXt-B) | **-11.1%** |
+| Architecture (ConvNeXt-L -> ViT-L, both DINOv3) | **-11.2%** |
+| Capacity (ConvNeXt-B -> ConvNeXt-L, both DINOv3) | -1.5% |
+
+Doubling parameters is worth almost nothing; what the network was trained to do
+and what shape it is are each worth an order of magnitude more. The reading for
+the objective: every image here is the same object class, and the invariances
+that make a classifier good at telling a house from a car are exactly the ones
+that discard within-class appearance, which is where the price signal lives.
+
+Photographic metadata (original dimensions, file size, sharpness, saturation,
+sky and vegetation fractions, edge density) reaches R2 0.103 alone and adds
+about 0.85% inside a concatenation. Part of it is information the backbone
+structurally cannot see, because every image is resized to a square first.
+
+---
+
+## E8 — local tiles, and the planned 2x2 study
+
+Each image split into a 2x2 grid, each tile resized to the full input size,
+the four descriptors averaged:
+
+| Features | MSE |
+| --- | ---: |
+| whole image, DINOv3 ViT-L @224 | 76,802 |
+| 2x2 tiles only | 76,800 |
+| **whole + tiles** | **74,936** |
+
+Tiles alone and the whole image alone are indistinguishable, but together they
+are 2.4% better than either. The local view is complementary, not redundant.
+This is the project plan's whole-plus-local-patch contrast, and it holds.
+
+The planned 2x2 study (input type x training objective), on DINOv3 ViT-H+:
+
+| | plain MSE | MSE + ordinal (lambda=0.3) | objective effect |
+| --- | ---: | ---: | ---: |
+| whole only | 70,818 | 70,722 | -96 |
+| whole + local tiles | **70,236** | 70,367 | +131 |
+| input effect | -582 | -355 | |
+
+The input-side effect is consistent in sign and 2-4x the seed noise, so it is
+real but small. The objective-side effect changes sign between rows, so it is
+noise. They do not combine: adding the ordinal task on top of local tiles is
+slightly worse than tiles alone. The plan hypothesised complementarity; there
+is none.
+
+---
+
+## E9 — resolution is set by the source image, not by the backbone
+
+Each backbone was also run at its own pretraining resolution, to test whether
+the earlier sweep had simply been using them out of distribution.
+
+| Backbone | native | @224 | @256 | @336 | @518 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| DINOv2 ViT-L/14 | 518 | 78,078 | — | **76,807** | 77,231 |
+| DINOv2 ViT-B/14 | 518 | 84,872 | — | **82,414** | 82,401 |
+| DINOv3 ViT-L/16 | 256 | 76,802 | 76,112 | **74,134** | — |
+| DINOv3 ViT-H+/16 | 256 | 72,396 | 71,344 | **70,818** | — |
+
+**The hypothesis is refuted.** Two families whose pretraining resolutions
+differ by a factor of two both optimise at about 336. DINOv2 is worse at its
+own native 518 than at 336; DINOv3 is better above its native 256. The common
+factor is the source image at 400x300, so about 336 is where there is nothing
+left to resolve and further upsampling only interpolates. A cross-family
+controlled result that the binding constraint is the data, not the model
+configuration.
+
+---
+
+## E11 — regressor comparison (the plan's Ridge vs XGBoost)
+
+On DINOv3 ViT-H+ @336:
+
+| Head | MSE | R2 | wall time |
+| --- | ---: | ---: | ---: |
+| MLP | **70,818** | 0.548 | 42 s |
+| Ridge | 72,624 | 0.537 | 338 s |
+| XGBoost | 74,140 | 0.527 | 1,264 s |
+| LightGBM | 74,584 | 0.524 | 116 s |
+
+Ridge beats XGBoost, and the MLP beats both while being 30x cheaper than
+XGBoost. Ridge outranking the boosted trees reproduces what E4 found on DINOv2
+ViT-B, so it is a property of the input rather than of one backbone: no single
+dimension of a dense ViT embedding is individually meaningful, which is what
+axis-aligned splits need.
+
+The MLP's margin over Ridge also narrows as features improve — 4.3% on DINOv2
+ViT-B @224, 2.5% on DINOv3 ViT-H+ @336. The stronger the representation, the
+more nearly linear the remaining problem.
+
+---
+
+## E12 — ordinal auxiliary task (the plan's supervision contrast)
+
+Five quantile buckets give four thresholds, trained as auxiliary binary "is
+this house worth more than threshold k?" heads beside an untouched scalar
+regression output.
+
+| lambda | MSE | vs plain MSE |
+| --- | ---: | ---: |
+| 0.1 | 70,747 | -0.10% |
+| 0.3 | **70,722** | -0.14% |
+| 1.0 | 71,132 | +0.44% |
+| 0 (plain MSE) | 70,818 | — |
+
+**Neutral.** The best margin is 96 MSE against a seed standard deviation of
+130-255, so it is not a result; lambda=1.0 is clearly harmful.
+
+Worth contrasting with the binned-distribution head of E4, which was decisively
+worse. The prediction was that the ordinal formulation would avoid that failure
+mode, because it *adds* four outputs beside a scalar head still trained on the
+metric rather than *replacing* the scalar with 64 competing outputs. That
+prediction held — it does not degrade. It also adds nothing, which suggests the
+ordering information it injects is already implicit in the regression loss.
+
+---
+
+## E13/E14 — prediction-level fusion
+
+The plan listed prediction-level fusion alongside feature concatenation. Non-
+negative least squares over member predictions, with both the mixing weights
+and a final linear recalibration fitted out-of-fold (for fold k, on the other
+four folds).
+
+A first pass over all 56 stored out-of-fold vectors — excluding the oracle-
+routed predictions from E6, which encode the true tier — gave 65,347 raw and
+64,909 after linear recalibration. Isotonic recalibration was worse (65,254):
+the miscalibration is a uniform tilt (slope 1.073, from averaging several
+individually shrunk predictors), which two parameters fix exactly, while
+isotonic spends its extra freedom on noise.
+
+The submitted ensemble refits nine members so that test predictions exist:
+
+| MSE | R2 | slope |
+| ---: | ---: | ---: |
+| **65,278** | 0.583 | 0.998 |
+
+against a best single member of 69,175 — a **5.63%** gain, the largest single
+improvement of the second round.
+
+### Ensemble weight does not track member accuracy
+
+| Weight | Member | Own MSE |
+| ---: | --- | ---: |
+| 0.193 | DINOv2 ViT-L/14 @518 | 77,231 |
+| 0.169 | DINOv3 ViT-H+ @256 | 71,344 |
+| 0.163 | DINOv3 ViT-H+ @224 + @336 | 70,542 |
+| 0.141 | H+@336 + L@336 + photo meta | 69,688 |
+| 0.129 | DINOv3 ViT-L 2x2 tiles | 76,800 |
+| 0.076 | DINOv3 ViT-L @336 | 74,134 |
+| 0.068 | H+@336 + L@336 + tiles + meta | 69,832 |
+| 0.037 | DINOv3 ViT-H+ @336 | 70,818 |
+| 0.033 | 6-way concatenation | **69,175** (best single) |
+
+The best single member receives the smallest weight. The two largest weights go
+to the only member from a different pretraining family (DINOv2) and the only
+member with a different input geometry (local tiles); the other seven are
+variants of the same DINOv3 global representation and are too correlated to
+each earn much. The 56-member blend showed the same pattern: the tiered routing
+predictions, which lost badly alone (+14.5% and +26.3%), still drew weights of
+0.081 and 0.027.
+
+**On this task, representation diversity is worth more than member accuracy.**
+It also rehabilitates E6: tiered routing fails as a predictor and still
+contributes as an ensemble member, because it makes different mistakes.
+
+---
+
+## What was ruled out as an explanation for the leaderboard gap
+
+Our 70,097 sits far behind the 41.9k-49.2k band occupied by twenty teams, so
+each cheap systematic explanation was tested and rejected:
+
+| Hypothesis | Verdict |
+| --- | --- |
+| Image ids leak price | Rejected: Pearson -0.006; id-adjacent pairs differ by 417 vs 429 at random |
+| Train/test near-duplicates | Rejected: 0.37% of test images at pHash Hamming <= 6 |
+| Tract housing exploitable by retrieval | Rejected: k-NN on DINOv3 features peaks at 98,839 (k=10) against 70,818 for an MLP on the same features; k=1 gives R2 0.035 |
+| Backbones used below native resolution | Rejected: see E9 |
+
+What remains is modelling capacity — end-to-end fine-tuning and large ensembles
+— which the compute budget did not allow.
+
+---
+
+## Limitations
+
+**End-to-end fine-tuning was not adequately evaluated.** Two attempts were
+made. The first (DINOv2 ViT-B @280, 20 epochs) returned 73,481 on fold 0,
+behind the frozen-feature concatenation's 69,827 on the same fold — but its
+console output was lost to buffering, so under-training could not be
+distinguished from a failed run. The second (DINOv3 ViT-L @256, 40 epochs,
+mixup, layer-wise LR decay) was stopped after 135 minutes: one fold costs about
+two hours on the available 8 GB GPU and five folds would cost over ten.
+
+This is a gap, not a negative result, and should be read as such. The frozen-
+feature route was chosen deliberately: cached features make an experiment loop
+that runs in seconds, which is what allowed seventy-plus controlled
+configurations to be compared, where the same compute would have bought two or
+three fine-tuning runs. Given the oracle result in E6, which shows large
+headroom in coarse tier separability, systematic fine-tuning and multi-model
+ensembling are the obvious first items of future work.
+
+---
+
+## Final configuration
+
+Nine frozen-feature MLPs blended by non-negative least squares with linear
+recalibration. Members span two pretraining families (DINOv2, DINOv3), four
+input resolutions (224/256/336/518), two input geometries (whole frame, 2x2
+tiles) and photographic metadata.
+
+| | OOF MSE | R2 |
+| --- | ---: | ---: |
+| Constant-prediction baseline | 156,686 | 0 |
+| Best single frozen backbone (DINOv3 ViT-H+ @336) | 70,818 | 0.548 |
+| Best feature concatenation (6-way, 3 seeds) | 68,522 | 0.563 |
+| **Nine-member blend** | **65,278** | **0.583** |
+
+Predicted public leaderboard about 61,400 at the measured 0.94 conversion,
+against 70,097 for the submission currently on the board.

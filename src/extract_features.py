@@ -58,9 +58,10 @@ class ImageList(Dataset):
     """
 
     def __init__(self, paths: list[Path], img_size: int, crop_mode: str,
-                 mean: tuple[float, ...], std: tuple[float, ...]) -> None:
+                 mean: tuple[float, ...], std: tuple[float, ...], tiles: int = 1) -> None:
         self.img_size = img_size
         self.crop_mode = crop_mode
+        self.tiles = tiles
         self.mean = np.array(mean, dtype=np.float32).reshape(3, 1, 1)
         self.std = np.array(std, dtype=np.float32).reshape(3, 1, 1)
         self.images = [
@@ -71,8 +72,33 @@ class ImageList(Dataset):
     def __len__(self) -> int:
         return len(self.images)
 
+    def _tiles(self, img: Image.Image) -> list[Image.Image]:
+        """Split into an n x n grid of disjoint tiles.
+
+        Each tile is then resized to the full input size, so a 2x2 grid gives
+        the backbone roughly twice the linear magnification on each quadrant.
+        E3 showed that upsampling past the native resolution still helps,
+        which implies the gain comes from token density rather than from new
+        pixels; tiling is the stronger form of the same mechanism, spending
+        the token budget on sub-regions instead of spreading it thinner over
+        the whole frame.
+        """
+        n = self.tiles
+        w, h = img.size
+        out = []
+        for r in range(n):
+            for c in range(n):
+                out.append(img.crop((c * w // n, r * h // n,
+                                     (c + 1) * w // n, (r + 1) * h // n)))
+        return out
+
     def __getitem__(self, idx: int) -> torch.Tensor:
         img = Image.fromarray(self.images[idx])
+        if self.tiles > 1:
+            return torch.stack([self._prepare(t) for t in self._tiles(img)])
+        return self._prepare(img)
+
+    def _prepare(self, img: Image.Image) -> torch.Tensor:
         size = self.img_size
 
         if self.crop_mode == "squash":
@@ -116,6 +142,11 @@ def main() -> None:
     parser.add_argument("--img-size", type=int, default=224)
     parser.add_argument("--crop-mode", choices=["squash", "center", "pad"], default="squash")
     parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--tiles", type=int, default=1,
+                        help="split each image into an n x n grid and average the tile features")
+    parser.add_argument("--keep-tiles", action="store_true",
+                        help="store each tile's descriptor instead of their mean, flattened to "
+                             "(n, tiles^2 * dim), so a head can learn how to weight them")
     parser.add_argument("--flip-tta", action="store_true",
                         help="average features of the image and its mirror")
     parser.add_argument("--tag", default=None, help="output filename stem")
@@ -136,27 +167,42 @@ def main() -> None:
     cfg = timm.data.resolve_data_config({}, model=model)
     print(f"{args.model} | img_size {args.img_size} | crop {args.crop_mode} | device {device}")
 
-    dataset = ImageList(paths, args.img_size, args.crop_mode, cfg["mean"], cfg["std"])
+    dataset = ImageList(paths, args.img_size, args.crop_mode, cfg["mean"], cfg["std"], args.tiles)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
     chunks = []
     with torch.autocast(device, dtype=torch.bfloat16, enabled=device == "cuda"):
         for batch in tqdm(loader, desc="extracting", unit="batch", leave=False):
             batch = batch.to(device, non_blocking=True)
+            # With tiling the batch is (B, T, 3, H, W): fold the tiles into the
+            # batch dimension, then average their descriptors back per image.
+            tiled = batch.ndim == 5
+            if tiled:
+                b, t = batch.shape[:2]
+                batch = batch.flatten(0, 1)
             out = pool_features(model, batch)
             if args.flip_tta:
                 out = (out + pool_features(model, torch.flip(batch, dims=[3]))) / 2
+            if tiled:
+                # Keeping the tiles unpooled lets a downstream head learn the
+                # weighting; averaging here would hard-code equal weights.
+                out = out.view(b, t, -1)
+                out = out.flatten(1) if args.keep_tiles else out.mean(dim=1)
             chunks.append(out.float().cpu())
 
     features = torch.cat(chunks).numpy().astype(np.float32)
 
-    tag = args.tag or f"{args.model.split('.')[0]}_{args.img_size}_{args.crop_mode}" + ("_flip" if args.flip_tta else "")
+    tag = args.tag or (f"{args.model.split('.')[0]}_{args.img_size}_{args.crop_mode}"
+                       + (f"_tile{args.tiles}" if args.tiles > 1 else "")
+                       + ("keep" if args.tiles > 1 and args.keep_tiles else "")
+                       + ("_flip" if args.flip_tta else ""))
     FEATURE_DIR.mkdir(parents=True, exist_ok=True)
     out_path = FEATURE_DIR / f"{tag}__{args.split}.npz"
     np.savez_compressed(out_path, features=features, imageid=df["imageid"].to_numpy())
     meta = {
         "model": args.model, "img_size": args.img_size, "crop_mode": args.crop_mode,
-        "flip_tta": args.flip_tta, "split": args.split, "shape": list(features.shape),
+        "flip_tta": args.flip_tta, "tiles": args.tiles, "keep_tiles": args.keep_tiles,
+        "split": args.split, "shape": list(features.shape),
     }
     (FEATURE_DIR / f"{tag}__{args.split}.json").write_text(json.dumps(meta, indent=2))
     print(f"wrote {out_path}  shape {features.shape}")

@@ -65,7 +65,8 @@ ALPHAS = np.logspace(0, 6, 25)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Set from the CLI so the binned heads can be swept without editing code.
-CFG = {"n_bins": 64, "smoothing": 1.5, "lambda_mse": 1.0, "epochs": 40, "seed": 0}
+CFG = {"n_bins": 64, "smoothing": 1.5, "lambda_mse": 1.0, "epochs": 40, "seed": 0,
+       "n_buckets": 5, "lambda_ordinal": 0.3, "n_tiles": 4}
 
 
 # --------------------------------------------------------------------------
@@ -83,6 +84,19 @@ def head_lightgbm(Xtr, ytr, Xev):
         n_estimators=400, learning_rate=0.06, num_leaves=31,
         feature_fraction=0.1, bagging_fraction=0.8, bagging_freq=1,
         min_child_samples=40, n_jobs=-1, verbose=-1, random_state=0,
+    ).fit(Xtr, np.log(ytr))
+    return np.exp(model.predict(Xev))
+
+
+def head_xgboost(Xtr, ytr, Xev):
+    """Named in the project plan as the tree baseline, alongside Ridge."""
+    import xgboost as xgb
+
+    model = xgb.XGBRegressor(
+        n_estimators=500, learning_rate=0.05, max_depth=6,
+        subsample=0.8, colsample_bytree=0.1,
+        min_child_weight=10, reg_lambda=1.0,
+        tree_method="hist", n_jobs=-1, random_state=0, verbosity=0,
     ).fit(Xtr, np.log(ytr))
     return np.exp(model.predict(Xev))
 
@@ -172,12 +186,137 @@ def head_mlp_hybrid(Xtr, ytr, Xev):
     return _binned_head(Xtr, ytr, Xev, lambda_mse=CFG["lambda_mse"])
 
 
+def head_mlp_ordinal(Xtr, ytr, Xev):
+    """The project plan's supervision contrast: MSE plus an ordinal auxiliary.
+
+    The price range is cut at the quartile-style quantiles of the training
+    prices into 5 buckets, giving 4 thresholds. The trunk gets a second output
+    group of 4 logits trained with binary cross-entropy on "is this house worth
+    more than threshold k?", while the scalar regression output and its MSE
+    term are untouched. Prediction uses the scalar head only -- the ordinal
+    task exists to shape the shared representation, not to produce the answer.
+
+    This is a different proposition from the binned-distribution head in E4,
+    and the difference is the reason it is worth testing separately. That head
+    *replaced* the scalar output with 64 (or 8-32) competing outputs, and lost
+    to estimation variance. This one *adds* 4 outputs beside a scalar that is
+    still trained on the metric, so the parameter cost is small and the main
+    estimator is unchanged. The ordinal encoding is also monotone by
+    construction -- threshold k+1 implies threshold k -- which carries the
+    ordering of price that plain multi-class classification discards.
+    """
+    t = np.log(ytr)
+    mu, sd = t.mean(), t.std()
+    n_buckets = CFG.get("n_buckets", 5)
+    # Quantile cuts, fitted on the training portion only.
+    qs = np.linspace(0, 100, n_buckets + 1)[1:-1]
+    thresholds = np.percentile(ytr, qs)
+    ordinal = (ytr[:, None] > thresholds[None, :]).astype(np.float32)
+
+    targets = np.concatenate([((t - mu) / sd)[:, None].astype(np.float32), ordinal], axis=1)
+    lam = CFG.get("lambda_ordinal", 0.3)
+    k = len(thresholds)
+    bce = nn.BCEWithLogitsLoss()
+
+    def loss_fn(out, target):
+        reg = nn.functional.mse_loss(out[:, 0], target[:, 0])
+        aux = bce(out[:, 1:], target[:, 1:])
+        return reg + lam * aux
+
+    model = _train_mlp(Xtr, targets, 1 + k, loss_fn)
+    return np.exp(_predict(model, Xev).numpy()[:, 0] * sd + mu)
+
+
+class TilePoolMLP(nn.Module):
+    """Pool per-tile descriptors, then regress.
+
+    `learnable=False` averages the tiles, which is the equal-weight control.
+    `learnable=True` gives each grid position a free parameter, softmaxed over
+    positions, so the model can decide that (say) the lower-centre tile
+    holding the facade and driveway matters more than the upper corners that
+    are mostly sky. The weights are global rather than per-image: that is the
+    literal contrast the project plan asks for, and it keeps the comparison to
+    exactly one degree of freedom per tile.
+    """
+
+    def __init__(self, n_tiles: int, dim: int, learnable: bool) -> None:
+        super().__init__()
+        self.n_tiles, self.dim = n_tiles, dim
+        self.learnable = learnable
+        if learnable:
+            self.logits = nn.Parameter(torch.zeros(n_tiles))  # starts uniform
+        self.trunk = MLP(dim, 1)
+
+    def forward(self, x):
+        t = x.view(x.shape[0], self.n_tiles, self.dim)
+        if self.learnable:
+            w = torch.softmax(self.logits, dim=0).view(1, -1, 1)
+            pooled = (t * w).sum(dim=1)
+        else:
+            pooled = t.mean(dim=1)
+        return self.trunk(pooled)
+
+    def weights(self) -> np.ndarray:
+        if not self.learnable:
+            return np.full(self.n_tiles, 1 / self.n_tiles)
+        return torch.softmax(self.logits.detach().cpu(), dim=0).numpy()
+
+
+def _tile_head(Xtr, ytr, Xev, learnable: bool):
+    n_tiles = CFG["n_tiles"]
+    dim = Xtr.shape[1] // n_tiles
+    t = np.log(ytr)
+    mu, sd = t.mean(), t.std()
+
+    torch.manual_seed(CFG["seed"])
+    model = TilePoolMLP(n_tiles, dim, learnable).to(DEVICE)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-2)
+    xb = torch.as_tensor(Xtr, dtype=torch.float32, device=DEVICE)
+    yb = torch.as_tensor(((t - mu) / sd)[:, None], dtype=torch.float32, device=DEVICE)
+    n, bs, epochs = len(xb), 256, CFG["epochs"]
+    steps = epochs * max(1, n // bs)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=1e-3, total_steps=steps, pct_start=0.15)
+
+    model.train()
+    step = 0
+    for _ in range(epochs):
+        perm = torch.randperm(n, device=DEVICE)
+        for i in range(0, n - bs + 1, bs):
+            idx = perm[i : i + bs]
+            loss = nn.functional.mse_loss(model(xb[idx]), yb[idx])
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+            if step < steps - 1:
+                sched.step()
+            step += 1
+
+    model.eval()
+    CFG["last_tile_weights"] = model.weights()
+    with torch.no_grad():
+        xe = torch.as_tensor(Xev, dtype=torch.float32, device=DEVICE)
+        out = torch.cat([model(xe[i : i + 1024]).cpu() for i in range(0, len(xe), 1024)])
+    return np.exp(out.numpy().ravel() * sd + mu)
+
+
+def head_tile_mean(Xtr, ytr, Xev):
+    return _tile_head(Xtr, ytr, Xev, learnable=False)
+
+
+def head_tile_learned(Xtr, ytr, Xev):
+    return _tile_head(Xtr, ytr, Xev, learnable=True)
+
+
 HEADS = {
     "ridge": head_ridge,
     "lightgbm": head_lightgbm,
+    "xgboost": head_xgboost,
+    "tile_mean": head_tile_mean,
+    "tile_learned": head_tile_learned,
     "mlp_mse": head_mlp_mse,
     "mlp_binned": head_mlp_binned,
     "mlp_hybrid": head_mlp_hybrid,
+    "mlp_ordinal": head_mlp_ordinal,
 }
 
 
@@ -208,6 +347,12 @@ def main() -> None:
     parser.add_argument("--bins", type=int, default=64)
     parser.add_argument("--smoothing", type=float, default=1.5)
     parser.add_argument("--lambda-mse", type=float, default=1.0)
+    parser.add_argument("--buckets", type=int, default=5,
+                        help="price buckets for the ordinal auxiliary task (plan: 5)")
+    parser.add_argument("--lambda-ordinal", type=float, default=0.3,
+                        help="weight on the ordinal auxiliary loss")
+    parser.add_argument("--n-tiles", type=int, default=4,
+                        help="tiles per image in a kept-tiles feature file (2x2 = 4)")
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--seeds", type=int, nargs="+", default=[0],
                         help="repeat each run with these seeds to gauge run-to-run stability")
@@ -218,7 +363,9 @@ def main() -> None:
     args = parser.parse_args()
 
     CFG.update(n_bins=args.bins, smoothing=args.smoothing,
-               lambda_mse=args.lambda_mse, epochs=args.epochs)
+               lambda_mse=args.lambda_mse, epochs=args.epochs,
+               n_buckets=args.buckets, lambda_ordinal=args.lambda_ordinal,
+               n_tiles=args.n_tiles)
 
     folds = load_folds()
     y = folds["price"].to_numpy(dtype=np.float64)
@@ -251,6 +398,11 @@ def main() -> None:
             label = f"{short} / {name}"
             extra = f"  +-{m['mse_seed_std']:,.0f}" if len(args.seeds) > 1 else ""
             print(format_metrics(label, m) + f"{extra}  [{m['seconds']:.0f}s]")
+            if name == "tile_learned" and "last_tile_weights" in CFG:
+                w = CFG["last_tile_weights"]
+                print("    learned tile weights (row-major): "
+                      + "  ".join(f"{v:.3f}" for v in w)
+                      + f"   (uniform would be {1 / len(w):.3f})")
 
     results = pd.DataFrame(rows).sort_values("mse").reset_index(drop=True)
     EXPERIMENT_DIR.mkdir(parents=True, exist_ok=True)
