@@ -1,0 +1,20 @@
+{
+  "model": "vit_base_patch14_reg4_dinov2.lvd142m",
+  "img_size": 280,
+  "batch_size": 16,
+  "epochs": 20,
+  "lr": 0.0001,
+  "weight_decay": 0.05,
+  "layer_decay": 0.75,
+  "ema_decay": 0.999,
+  "tta_flip": false,
+  "seed": 0,
+  "folds": [
+    0
+  ],
+  "log_every": 2,
+  "write_submission": false,
+  "tag": "ft_pilot_f0",
+  "mse": 73481.47474182797,
+  "r2": 0.532039737341493
+}

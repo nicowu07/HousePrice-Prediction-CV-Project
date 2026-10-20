@@ -201,3 +201,127 @@ The distributional head (a strict generalisation of the planned ordinal
 auxiliary task) was implemented and tested anyway, and lost under a
 hyperparameter sweep. Effort moved instead to representation quality, which
 the evidence identifies as the binding constraint.
+
+---
+
+## E5 — training objective and price-dependent weighting
+
+The metric is MSE on raw price; the baseline MLP trains on squared error in
+log price. Those differ, and the difference has a closed form. With
+`p_hat = exp(mu_hat)` and `p = exp(z)`,
+
+    (p_hat - p)^2 = e^{2z}(e^{mu_hat - z} - 1)^2  ~=  p^2 (mu_hat - z)^2
+
+to first order. **Raw-price MSE is log-space MSE weighted by p².** So
+switching the target to raw price and up-weighting expensive houses are two
+corrections for the same mismatch, not two independent ideas. That lets a
+single parameter sweep subsume both: `w ∝ p^α`, with α = 0 the current
+baseline and α = 2 the first-order equivalent of raw MSE.
+
+Loss weighting is used rather than resampling: the expected gradient is the
+same, but resampling adds sampling noise and changes the price composition of
+each batch, which perturbs the BatchNorm statistics and would put a second
+variable into the comparison. Weights are normalised to mean 1 so that
+"weighting" is not confounded with "a higher learning rate".
+
+Single seed, 4-way concatenated features:
+
+| Condition | MSE | vs A | n_eff | n_eff / n |
+| --- | ---: | ---: | ---: | ---: |
+| α = 0.5 | 75,106 | −0.15% | 7,467 | 93% |
+| **A — log target, unweighted** | **75,218** | — | 8,000 | 100% |
+| α = 1.0 | 75,265 | +0.06% | 6,146 | 77% |
+| α = 1.5 | 75,350 | +0.18% | 4,631 | 58% |
+| C — 2× for price ≥ 1000 | 75,430 | +0.28% | 7,274 | 91% |
+| B — raw-price target | 75,806 | +0.78% | 8,000 | — |
+| α = 2.0 | 75,867 | +0.86% | 3,360 | 42% |
+| α = 3.0 | 80,399 | +6.89% | 1,839 | 23% |
+
+Three seeds, leading conditions (± is the standard deviation across seeds):
+
+| Condition | MSE | ± | vs A |
+| --- | ---: | ---: | ---: |
+| α = 0.5 | 74,266 | 161 | −0.27% |
+| C — 2× for price ≥ 1000 | 74,345 | 70 | −0.16% |
+| A — baseline | 74,467 | 129 | — |
+| B — raw-price target | 74,860 | 150 | +0.53% |
+
+**B and α = 2.0 land 61 MSE apart** (75,806 vs 75,867), which is well inside
+seed noise. Two independently implemented routes converging on the same number
+is a direct empirical confirmation of the equivalence derived above.
+
+**The metric-aligned weight is not the best weight.** Theory says α = 2;
+the empirical curve is flat to α ≈ 0.5 and then climbs. The reason is
+estimation efficiency: weighting reduces the effective sample size
+`n_eff = (Σw)² / Σw²`, and α = 2 discards 58% of it. Two forces act in
+opposite directions — metric alignment pulls α up, estimation efficiency pulls
+it down — and with R² ≈ 0.52 the variance term dominates, so the optimum sits
+near the efficiency end. The MSE curve turns upward exactly where n_eff starts
+to collapse (Figure 3).
+
+Practically: mild weighting (α ≈ 0.5, or the 2× heuristic) is neutral to
+very slightly positive and within seed noise; strong weighting and the
+raw-price target are measurably worse. The baseline objective is kept.
+
+---
+
+## E6 — does splitting by price tier help?
+
+Tertile tiers, three MLP experts, and a three-way gate on the same features.
+Single seed.
+
+| Routing | MSE | vs single | R² |
+| --- | ---: | ---: | ---: |
+| oracle (routed by the **true** tier) | 40,563 | −46.07% | 0.741 |
+| single model | 75,218 | — | 0.520 |
+| soft (probability-weighted mixture) | 86,157 | +14.54% | 0.450 |
+| hard (routed by the predicted tier) | 95,028 | +26.34% | 0.394 |
+
+Gate accuracy is 62.1% against a 33.4% majority-class baseline — far better
+than chance, far short of usable. Errors are mostly to an adjacent tier, but
+415 of 8,000 jump two tiers.
+
+**Realisable routing is clearly harmful.** Soft beats hard, as expected, since
+it never commits to a single wrong tier — but both lose badly to one model. Two
+reasons: each expert sees a third of the data, and its output range is
+confined to its own tier, so a misroute cannot be recovered. A single model
+answers uncertainty by shrinking toward the mean, which is MSE-optimal; a
+cascade is forced to commit. The per-band breakdown confirms the mechanism —
+soft routing is worst in the two middle bands (+41%, +48%), exactly where the
+tier boundaries sit, and only helps in the top band (−4.4%).
+
+This is consistent with E4, where a binned-distribution head — effectively
+soft routing over many tiers with constant experts — also failed to beat a
+single regressor.
+
+### The oracle number is the useful part
+
+Routing by the true tier reaches **MSE 40,563 (R² 0.741)**, which is roughly
+the top of the public leaderboard. The oracle leaks the answer, so this is not
+an achievable result; its value is that it localises the difficulty. Knowing
+only whether a house is cheap, mid or expensive removes 46% of the squared
+error. Our model captures part of that and the gate recovers 62% of the tier
+label, and the gap between 75,218 and 40,563 is almost entirely the gap in
+coarse tier discrimination.
+
+This unifies the earlier findings. Tail under-prediction, optimal shrinkage,
+and features being the binding constraint are three views of one thing: **the
+photograph does not reliably reveal which price tier a house belongs to.**
+Anything that improves coarse tier separability is worth far more than
+refinements to the regression head or the loss.
+
+---
+
+## Figures
+
+Generated by `src/make_figures.py` into `report/figures/` as vector PDF at
+IEEE column widths.
+
+| File | Content |
+| --- | --- |
+| `fig1_calibration.pdf` | (a) mean signed error by true-price band, (b) mean outcome vs mean prediction by prediction decile — the pair is the argument that tail bias is shrinkage, not a defect |
+| `fig2_price_bands.pdf` | MSE per price band, labelled with each band's share of total squared error |
+| `fig3_weighting.pdf` | MSE and effective sample size against the weighting exponent α |
+| `fig4_representations.pdf` | Out-of-fold MSE by frozen backbone and input resolution |
+
+Units: price is in $1000 USD throughout, so MSE is in ($1000 USD)².

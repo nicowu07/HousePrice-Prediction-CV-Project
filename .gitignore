@@ -52,3 +52,6 @@ Thumbs.db
 # --- course material: not redistributed from a public repo ---
 COMP90086_2026_Project.pdf
 CV_Plan.pdf
+
+# figure previews; the vector PDFs are the deliverable
+report/figures/*.png
