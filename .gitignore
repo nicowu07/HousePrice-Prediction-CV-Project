@@ -55,3 +55,9 @@ CV_Plan.pdf
 
 # figure previews; the vector PDFs are the deliverable
 report/figures/*.png
+
+# --- report build: keep the PDF, drop the intermediates ---
+report-paper/__MACOSX/
+report-paper/report/build/*
+!report-paper/report/build/main.pdf
+reportdraft.en*.pdf
