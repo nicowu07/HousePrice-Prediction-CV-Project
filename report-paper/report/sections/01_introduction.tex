@@ -1,0 +1,9 @@
+% !TeX root = ../main.tex
+
+\section{Introduction}
+
+% Typeset from reportdraft.en.md; edit this TeX file for subsequent revisions.
+
+A very important step in putting a property on the market is setting a reasonable price, and real estate agents usually combine property characteristics, market conditions and information on comparable transactions to recommend a listing price \cite{nar2026pricing}. A reasonable valuation can provide an agency with a good starting point for negotiation, and can also help real estate platforms determine which properties need further price review. Although these potential uses reflect the practical value of house price prediction, estimating a price from a single image is still difficult. A photograph can contain information on architectural style, the visible extent of the building and the surrounding environment, but does not directly provide the floor area, precise location or interior condition. At the same time, different viewing angles, lighting and occlusion of the same house can also affect the estimation of its price.
+
+In this project, we used 8,000 images with price labels, drawn from a Southern California real-estate listing dataset \cite{dogan2019socal}, to train lightweight regressors on frozen pretrained visual features, to accommodate limited labels and compute. During model training, we focused on studying whether combining whole-image and local features could reduce prediction error and whether price-order auxiliary supervision could further improve prediction. Finally, we further combined the relevant experimental models to investigate whether using different models together would increase prediction accuracy.

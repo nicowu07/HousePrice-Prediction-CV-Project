@@ -1,0 +1,183 @@
+{
+  "model": "nine-member NNLS ensemble (frozen features)",
+  "prediction_source": "teammate/HousePrice-Prediction-CV-Project/outputs/experiments/oof_predictions_ensemble.csv",
+  "prediction_source_sha256": "6957b2faf258ed3b672ce89006fce95b44d3d6da050fa9f388aaeed64c3ab7b5",
+  "n": 8000,
+  "prices_unit": "US$1,000",
+  "mse_unit": "(US$1,000)^2",
+  "error_definition": "prediction - true price",
+  "mse_recomputed_from_rounded_csv": 65278.311061347624,
+  "mae_recomputed_from_rounded_csv": 180.423330875,
+  "price_band_statistics": [
+    {
+      "band": "195-<400",
+      "lower": 195,
+      "upper": 400,
+      "upper_inclusive": false,
+      "n": 1685,
+      "sample_share_percent": 21.0625,
+      "squared_error_share_percent": 8.660565339977277,
+      "mse": 26841.404307663503,
+      "mae": 121.63240059347181,
+      "bias_prediction_minus_true": 110.11617982195844
+    },
+    {
+      "band": "400-<700",
+      "lower": 400,
+      "upper": 700,
+      "upper_inclusive": false,
+      "n": 3031,
+      "sample_share_percent": 37.8875,
+      "squared_error_share_percent": 18.60469150749372,
+      "mse": 32054.974316769054,
+      "mae": 134.6397238535137,
+      "bias_prediction_minus_true": 78.31873210161662
+    },
+    {
+      "band": "700-<1,000",
+      "lower": 700,
+      "upper": 1000,
+      "upper_inclusive": false,
+      "n": 2005,
+      "sample_share_percent": 25.0625,
+      "squared_error_share_percent": 17.02644797988214,
+      "mse": 44347.44209478703,
+      "mae": 167.29629625935164,
+      "bias_prediction_minus_true": 8.579818453865336
+    },
+    {
+      "band": "1,000-<1,500",
+      "lower": 1000,
+      "upper": 1500,
+      "upper_inclusive": false,
+      "n": 735,
+      "sample_share_percent": 9.1875,
+      "squared_error_share_percent": 16.58043483453014,
+      "mse": 117806.01716036598,
+      "mae": 277.46279591836736,
+      "bias_prediction_minus_true": -203.63682857142857
+    },
+    {
+      "band": "1,500-2,000",
+      "lower": 1500,
+      "upper": 2000,
+      "upper_inclusive": true,
+      "n": 544,
+      "sample_share_percent": 6.800000000000001,
+      "squared_error_share_percent": 39.12786033811672,
+      "mse": 375617.7409289044,
+      "mae": 534.8875367647058,
+      "bias_prediction_minus_true": -532.0673823529412
+    }
+  ],
+  "calibration_bins": [
+    {
+      "bin": 1,
+      "n": 800,
+      "mean_prediction": 301.51497750000004,
+      "mean_true_price": 307.1086
+    },
+    {
+      "bin": 2,
+      "n": 800,
+      "mean_prediction": 414.82081375,
+      "mean_true_price": 411.4667525
+    },
+    {
+      "bin": 3,
+      "n": 800,
+      "mean_prediction": 498.45571125000004,
+      "mean_true_price": 508.40312625
+    },
+    {
+      "bin": 4,
+      "n": 800,
+      "mean_prediction": 567.130545,
+      "mean_true_price": 574.9206849999999
+    },
+    {
+      "bin": 5,
+      "n": 800,
+      "mean_prediction": 635.54833375,
+      "mean_true_price": 633.56759625
+    },
+    {
+      "bin": 6,
+      "n": 800,
+      "mean_prediction": 706.7701874999999,
+      "mean_true_price": 697.2943150000001
+    },
+    {
+      "bin": 7,
+      "n": 800,
+      "mean_prediction": 789.0079850000001,
+      "mean_true_price": 779.24669
+    },
+    {
+      "bin": 8,
+      "n": 800,
+      "mean_prediction": 898.4267225,
+      "mean_true_price": 890.73882625
+    },
+    {
+      "bin": 9,
+      "n": 800,
+      "mean_prediction": 1049.8147199999999,
+      "mean_true_price": 1051.17342625
+    },
+    {
+      "bin": 10,
+      "n": 800,
+      "mean_prediction": 1346.261605,
+      "mean_true_price": 1352.5632699999999
+    }
+  ],
+  "calibration_bin_method": "Stable sort by prediction; 10 consecutive groups of 800; input row order breaks ties.",
+  "high_price_summary": {
+    "threshold_inclusive": 1000,
+    "n": 1279,
+    "sample_share_percent": 15.987499999999999,
+    "squared_error_share_percent": 55.70829517264687
+  },
+  "cases": [
+    {
+      "imageid": "4244.jpg",
+      "true_price": 769.0,
+      "prediction": 768.984,
+      "error_prediction_minus_true": -0.01599999999996271,
+      "fold": 0,
+      "source_image": "house_dataset/train/4244.jpg",
+      "image_sha256": "929f10be50006392af14e81b55f308d225f8ee69d4cc73ff84e86e302e1df4ef"
+    },
+    {
+      "imageid": "2138.jpg",
+      "true_price": 1995.0,
+      "prediction": 526.614,
+      "error_prediction_minus_true": -1468.386,
+      "fold": 2,
+      "source_image": "house_dataset/train/2138.jpg",
+      "image_sha256": "ae072f3dc8150e002cb9dde6ff1f84bfe1a128635a1dbda121f5b58d471a3495"
+    },
+    {
+      "imageid": "5350.jpg",
+      "true_price": 635.0,
+      "prediction": 1485.39,
+      "error_prediction_minus_true": 850.3900000000001,
+      "fold": 3,
+      "source_image": "house_dataset/train/5350.jpg",
+      "image_sha256": "1dba0fa6bed9bb9e53587751924067fb6f7445d45ea47acc37c5ce2a92c354c3"
+    },
+    {
+      "imageid": "2409.jpg",
+      "true_price": 1980.0,
+      "prediction": 1176.471,
+      "error_prediction_minus_true": -803.529,
+      "fold": 1,
+      "source_image": "house_dataset/train/2409.jpg",
+      "image_sha256": "bae6b2d67eb6dfec4902cce734ecd065f3545ed3cbccadfc5135a3fa25ceafba"
+    }
+  ],
+  "evaluation_note": "Development OOF estimates; member selection and the whole blending pipeline were not independently validated.",
+  "rounding_note": "Per-image CSV prices/predictions have 3 decimal places; aggregate MSE differs slightly from final_ensemble.csv.",
+  "case_selection_note": "Use the four image IDs designated by the user in the project case-selection screenshot; no new selection rule inferred."
+}

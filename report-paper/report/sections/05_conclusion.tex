@@ -1,0 +1,7 @@
+% !TeX root = ../main.tex
+
+\section{Conclusion}
+
+% Typeset from reportdraft.en.md; edit this TeX file for subsequent revisions.
+
+Taken together, the above comparisons and error analysis show that frozen visual features allow us to estimate house prices usefully even with a limited dataset and compute: on the same five-group split the final ensemble reaches an out-of-fold MSE of 65,278 against 156,686 for predicting the mean training price, and the configuration submitted before the Kaggle leaderboard closed scored 63,952.39 on the test images. In the tested configurations, combining whole-image and local features performed better than using either view alone, while the price-order auxiliary task did not show a clear additional benefit. Expensive houses are still predicted low relative to their true prices, but the calibration diagnostic suggests this reflects how little a photograph reveals about price band rather than a correctable output bias.

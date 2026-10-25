@@ -1,0 +1,80 @@
+% !TeX root = ../main.tex
+
+\section{Method}
+
+
+\begin{table}[!htbp]
+\centering\footnotesize
+\caption{Training objective and notation}
+\label{tab:objective}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.15\linewidth}>{\raggedright\arraybackslash}p{0.25\linewidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Symbol & Meaning & Calculation or value used in this project \\
+\midrule
+\(\mathcal{L}\) & Total training loss & Sum of the price prediction loss and the weighted auxiliary loss \\
+\(\mathcal{L}_{\mathrm{price}}\) & Price prediction loss & Mean squared error of standardised log(price) \\
+\(\mathcal{L}_{\mathrm{order}}\) & Auxiliary loss for the four price-threshold judgements & Binary cross-entropy for the four binary judgements, averaged over samples and thresholds \\
+\(\lambda\) & Weight of the auxiliary loss & 0.3 in the combined experiments; 0 for regression only \\
+\bottomrule
+\end{tabularx}
+
+\end{table}
+
+\begin{table*}[!t]
+\centering\footnotesize
+\caption{Regression and post-processing configuration}
+\label{tab:configuration}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.18\linewidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Setting & Configuration used in this project \\
+\midrule
+Network structure & Two hidden layers with widths of 512 and 256; each layer uses BatchNorm, GELU and dropout (0.3) \\
+Output & 1 scalar for regression only; adding ordinal supervision introduces 4 additional threshold judgements, while the final valuation still uses only the scalar output \\
+Optimiser & AdamW; weight decay 0.01 \\
+Learning rate schedule & OneCycle; maximum learning rate 0.001, with the first 15\% of scheduling steps used to increase the learning rate \\
+Training budget & Each regression head is trained for 40 epochs, with 256 samples per batch \\
+Auxiliary thresholds & The 20\%, 40\%, 60\% and 80\% price quantiles of the corresponding training portion \\
+Individual predictor calibration & Within each outer training portion, ordinary random five-fold splits generate held-out predictions; these predictions and the training labels are used to fit an isotonic correction curve, which is then applied to the outer validation predictions \\
+Ensemble and output range & The nine predictors use non-negative least-squares weights, followed by linear correction; final predictions are limited to 195--2,000 thousand dollars \\
+\bottomrule
+\end{tabularx}
+
+\end{table*}
+
+\begin{table}[!htbp]
+\centering\footnotesize
+\caption{Inputs to the nine ensemble members}
+\label{tab:members}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.12\linewidth}>{\raggedright\arraybackslash}X>{\centering\arraybackslash}p{0.15\linewidth}@{}}
+\toprule
+Predictor & Input feature groups & Number of feature groups \\
+\midrule
+P1 & H+@336 + H+@256 + L@336 + D2L@336 + T + M & 6 \\
+P2 & H+@336 + L@336 + M & 3 \\
+P3 & H+@336 + L@336 + T + M & 4 \\
+P4 & H+@224 + H+@336 & 2 \\
+P5 & H+@336 & 1 \\
+P6 & H+@256 & 1 \\
+P7 & L@336 & 1 \\
+P8 & T & 1 \\
+P9 & D2L@518 & 1 \\
+\bottomrule
+\end{tabularx}
+
+\par\smallskip{\footnotesize\raggedright\textit{Note:} H+ and L denote DINOv3 ViT-H+ and ViT-L, respectively, and D2L denotes DINOv2 ViT-L; @s denotes an s\ensuremath{\times}s-pixel input. T is the mean of the features from the 2\ensuremath{\times}2 local tiles extracted using L@224; M consists of 19 image statistics (such as dimensions and sharpness).\par}
+\end{table}
+
+% Typeset from reportdraft.en.md; edit this TeX file for subsequent revisions.
+
+Our overall idea is to first convert images into numerical features and then learn the relationship between these features and house prices. We first resized all images to the specified square input size, then used the DINOv3 \cite{simeoni2025dinov3} image model with frozen parameters to extract features, and trained a small regression network using price labels. To test whether local views could provide additional information, we separately processed the full image and the four non-overlapping local tiles obtained by dividing the original image evenly into a 2\ensuremath{\times}2 grid. Each image tile was resized and its features were extracted separately, and the four groups of features were then averaged and concatenated with the whole-image features before being fed into the regression network. We then used controlled experiments to evaluate whether this whole-image + local combination was better than using only the whole image.
+
+For price prediction, we used a small neural network (MLP). The input features were first standardised using statistics from the training portion; the target prices were also first log-transformed and standardised to put them on a more concentrated numerical scale, and the predictions were then transformed back into prices. We also studied an auxiliary task that asked the network to judge whether the house price was greater than four price thresholds at the same time (these thresholds were determined from the price distribution in the corresponding training portion, dividing the houses into five groups with approximately equal numbers). Therefore, while the network was learning specific numerical values, it was also learning the ordering of prices from low to high. The training objective consists of the price prediction error and the error in judging price order, with the parameter \ensuremath{\lambda} controlling the weight of the auxiliary task. The two tasks share the regression network, but the final valuation only uses the price prediction output. All results are evaluated on the original price scale after the inverse transformation.
+
+\[
+\mathcal{L}=\mathcal{L}_{\mathrm{price}}+\lambda\mathcal{L}_{\mathrm{order}}.
+\]
+
+
+After the above price prediction, we further calibrated it, using a correction curve to adjust the predicted values to bring them closer to the actual prices, and then applied the curve to the validation samples. Apart from adjusting the output of an individual predictor, we also studied whether different predictors were complementary, namely how different visual features, input sizes and local views would produce different prediction errors. To further study the effect of combining different image information, we added frozen DINOv2 \cite{oquab2024dinov2} features alongside DINOv3, and examined combinations of whole-image features at different input sizes, local features, and image statistics such as image dimensions and sharpness. Each feature configuration was used to train a separate MLP price predictor, with the specific compositions shown in Table~\ref{tab:members}. We combined the outputs of nine existing regression predictors using weights, and then applied an overall linear correction to the combined result. We divided the data into five parts and took turns using one part to evaluate the ensemble. Each time, we used the existing predicted prices and true prices from the other four parts to determine the ensemble weights and overall correction parameters, and then applied these parameters to the currently held-out part. The specific regression network structure, training parameters and post-processing settings are shown in Table~\ref{tab:configuration}.
+
+

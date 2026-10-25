@@ -1,0 +1,36 @@
+% !TeX program = pdflatex
+% !TeX root = main.tex
+% IEEE conference format; wording, results and figures follow reportdraft.en.md.
+\documentclass[conference,a4paper]{IEEEtran}
+\usepackage[T1]{fontenc}
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs,tabularx,array}
+\usepackage[hidelinks]{hyperref}
+\usepackage{url}
+\usepackage{placeins}
+\graphicspath{{images/}{figures/}}
+\setlength{\emergencystretch}{1em}
+\newcommand{\authornames}{Hongze Li \quad and \quad Jiatong Wu}
+\newcommand{\studentids}{Student IDs: 1820462 \quad and \quad 1822875}
+\title{Evaluating Global and Local Visual Features for House Price Prediction}
+\author{\IEEEauthorblockN{\authornames}
+\IEEEauthorblockA{\studentids\\
+COMP90086 Computer Vision, The University of Melbourne}}
+\hypersetup{pdftitle={Evaluating Global and Local Visual Features for House Price Prediction},pdfauthor={Hongze Li and Jiatong Wu}}
+\begin{document}
+\maketitle
+\raggedbottom
+% No abstract or keywords, following the report's established writing brief.
+\input{sections/01_introduction}
+\input{sections/02_method}
+\input{sections/03_experiments}
+\input{sections/04_discussion}
+\input{sections/05_conclusion}
+% Keep all body text and figures before the bibliography. Only references may
+% extend to page five under the course limit; inspect the final PDF after edits.
+\FloatBarrier
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\end{document}

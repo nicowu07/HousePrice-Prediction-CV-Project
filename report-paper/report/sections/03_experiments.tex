@@ -1,0 +1,91 @@
+% !TeX root = ../main.tex
+
+\section{Experiments and Results}
+
+
+\begin{table}[!htbp]
+\centering\footnotesize
+\caption{Regressor and image-view comparisons}
+\label{tab:comparisons}
+\textbf{(a) Regressors with identical frozen features}\par\smallskip
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}X r@{}}
+\toprule
+Regressor & OOF MSE \ensuremath{\downarrow} \\
+\midrule
+MLP & \textbf{70,818} \\
+Ridge & 72,624 \\
+XGBoost & 74,140 \\
+\bottomrule
+\end{tabularx}
+
+\par\smallskip{\footnotesize\raggedright\textit{Note:} All three use whole-image features extracted by DINOv3 ViT-H+ from 336\ensuremath{\times}336-pixel inputs and the same fixed grouped five-fold split, with detected near-duplicate images kept in the same fold. The following result tables all report OOF MSE on the original price scale, in (thousand dollars)², rounded to integers.\par}
+\medskip
+\textbf{(b) Whole-image and local views with the same encoder}\par\smallskip
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}X r@{}}
+\toprule
+Input features & OOF MSE \ensuremath{\downarrow} \\
+\midrule
+Whole image & 76,802 \\
+Mean features from 2\ensuremath{\times}2 local tiles & 76,800 \\
+Concatenated whole-image and local features & \textbf{74,936} \\
+\bottomrule
+\end{tabularx}
+
+\par\smallskip{\footnotesize\raggedright\textit{Note:} Both the whole image and each local tile use DINOv3 ViT-L with 224\ensuremath{\times}224-pixel inputs; all regressors are regression-only MLPs. The three rows use the same evaluation split, and concatenation reduces MSE by approximately 2.4\% relative to the whole image. These are single-seed results.\par}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\footnotesize
+\caption{Local features and ordinal supervision}
+\label{tab:ordinal}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}X>{\centering\arraybackslash}p{0.24\linewidth}>{\centering\arraybackslash}p{0.24\linewidth}@{}}
+\toprule
+Input configuration & Continuous regression only (\ensuremath{\lambda}=0) & Continuous regression + ordinal (\ensuremath{\lambda}=0.3) \\
+\midrule
+Global DINOv3 ViT-H+@336 & 70,818 & 70,722 \\
+Global DINOv3 ViT-H+@336 + local DINOv3 ViT-L@224 & \textbf{70,236} & 70,367 \\
+\bottomrule
+\end{tabularx}
+
+\par\smallskip{\footnotesize\raggedright\textit{Note:} Values are OOF MSE in (thousand dollars)². Local features are the mean features of the four tiles in a 2\ensuremath{\times}2 grid. The global and local branches use different encoders and input sizes, so this comparison concerns the complete configuration with this local branch added; the view comparison using the same encoder is shown in Table~\ref{tab:comparisons}(b). All four settings have single-seed results, and the small differences have not undergone complete repeated validation.\par}
+\end{table}
+
+\begin{table*}[!t]
+\centering\footnotesize
+\caption{Feature combination and prediction averaging}
+\label{tab:ensemble}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.28\linewidth}>{\raggedright\arraybackslash}X r@{}}
+\toprule
+Configuration & What is combined and how it is trained & OOF MSE \ensuremath{\downarrow} \\
+\midrule
+Six concatenated feature groups + MLP & P1 in Table~\ref{tab:members}; one random initialisation & 69,175 \\
+Same six-group configuration, prediction averaging over three seeds & P1 trained with three different random initialisations, followed by averaging the price predictions & 68,522 \\
+Nine-member prediction ensemble & P1--P9 in Table~\ref{tab:members}; non-negative least-squares weights + linear correction & \textbf{65,278} \\
+\bottomrule
+\end{tabularx}
+
+\par\smallskip{\footnotesize\raggedright\textit{Note:} MSE is in (thousand dollars)². The approximately 5.6\% reduction uses 69,175 as the comparison baseline. The nine-member ensemble uses the single-seed predictions of each member, rather than directly adding members to the three-seed average; the three rows also do not form a complete ablation that changes only one factor. The value of 65,278 is a local development OOF estimate; member selection and the overall process have not been fully independently validated, and it is not a measured Kaggle score.\par}
+\end{table*}
+
+% Typeset from reportdraft.en.md; edit this TeX file for subsequent revisions.
+
+We compare price prediction methods, image inputs, the auxiliary task and prediction combinations under one controlled setting: a fixed five-group split that keeps the price distribution of each part similar, evaluated by mean squared error (MSE), where lower is better. We first tested three price prediction methods: MLP, Ridge and XGBoost \cite{chen2016xgboost}. All three used the same DINOv3 ViT-H+ image features extracted using 336\ensuremath{\times}336-pixel inputs. Table~\ref{tab:comparisons}(a) shows that the MSEs of MLP, Ridge and XGBoost were 70,818, 72,624 and 74,140, respectively, with MLP having the lowest error in the tested settings. The subsequent comparisons therefore all used MLP, so that image input and the auxiliary task could be varied against a fixed regressor.
+
+
+The image encoder was also chosen by comparison. Holding the regressor and the split fixed, replacing supervised ImageNet-22k pretraining with self-supervised DINOv3 pretraining on the same ConvNeXt-B architecture lowered the MSE from 98,752 to 87,744, and exchanging ConvNeXt-L for ViT-L under the same DINOv3 pretraining lowered it from 86,454 to 76,802, both by about 11\%. Doubling capacity from ConvNeXt-B to ConvNeXt-L under fixed pretraining was worth only 1.5\%. A plausible reason is that every image here shows the same object class, so the invariances that help a classifier separate categories also discard the within-class appearance variation price depends on.
+
+
+After fixing the price prediction method, we next checked whether using full photographs, local images or a combination of the two would affect the results. To keep the image model consistent in this view comparison, both whole-image and local features were extracted using DINOv3 ViT-L with 224\ensuremath{\times}224-pixel inputs. The MSEs of using only the whole image and only local features were almost the same, at 76,802 and 76,800, respectively; concatenating the two groups of features reduced the MSE to 74,936, approximately 2.4\% lower than using the whole image (Table~\ref{tab:comparisons}(b)). In this configuration local features therefore supplement whole-image information rather than replacing it.
+
+Besides testing different combinations of views, we also examined whether the auxiliary task of judging higher or lower prices (ordinal) could improve prediction. Using the lower-error ViT-H+ whole-image configuration at 336\ensuremath{\times}336 pixels, we varied whether ViT-L@224 local features were added and whether the auxiliary task was enabled (Table~\ref{tab:ordinal}). The results show that the auxiliary task itself only slightly reduced the error of the whole-image configuration, while slightly increasing it when whole-image and local features were combined. Because the changes were small and inconsistent in direction, we cannot determine whether the price-order auxiliary task can provide a stable additional benefit.
+
+
+Finally, we also tried some combinations of different strategies (Table~\ref{tab:ensemble}), concatenating six groups of features and feeding them into the same MLP, which gave an MSE of 69,175; training the same configuration with three different random initialisations and then averaging the predictions reduced the MSE to 68,522. Then, combining the price outputs of nine differently configured predictors using weights gave an MSE of 65,278, approximately 5.6\% lower than the best member trained in a single run (Table~\ref{tab:ensemble}). Because member selection reused the development results and the process was not independently validated, we cannot claim this is the best combination; it simply had the lowest MSE among those we tried.
+
+
+We also tested for shortcuts that would make the score misleading. Image ids are essentially uncorrelated with price (Pearson \ensuremath{-}0.006); only 0.37\% of test images have a near-duplicate in the training set at a perceptual-hash Hamming distance of six or less; and a nearest-neighbour regressor on the same features reaches only 98,839, against 70,818 for the MLP, with k=1 giving an $R^2$ of 0.035, so the task is not being solved by retrieving near-identical properties.
+
+
+All the figures above are development out-of-fold estimates on the 8,000 training images. The configuration submitted before the Kaggle leaderboard closed was the six-group concatenation with three-seed averaging, which scored 63,952.39 on the test images against a development estimate of 68,522, about 7.1\% higher than the measured error rather than optimistic. Out-of-fold models train on 6,400 images while the submitted model was refitted on all 8,000, which accounts for the gap. The nine-predictor ensemble was finalised after the leaderboard closed and has no scored submission.
+
+
